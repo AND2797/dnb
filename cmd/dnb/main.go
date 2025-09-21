@@ -134,6 +134,7 @@ func main() {
 		prevFilePath, err := findLatestFileBefore(basePath, today)
 		if err == nil && prevFilePath != "" {
 			// Copy previous notebook's content
+			fmt.Println(fmt.Sprintf("Rolling over from %s", prevFilePath))
 			if err := copyFile(prevFilePath, filePath); err != nil {
 				fmt.Println("Error copying rollover file:", err)
 				// Optionally create empty file if copy fails
