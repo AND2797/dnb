@@ -110,6 +110,38 @@ func copyFile(src, dst string) error {
 	return nil
 }
 
+// writeHeader writes the date and location as the first line to the given file
+func writeHeader(filePath string, dateStr string) error {
+	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Read existing content
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+
+	// Construct header line
+	header := fmt.Sprintf("%s \n", dateStr)
+
+	// Write header + original content back to file
+	f.Truncate(0)
+	f.Seek(0, 0)
+	_, err = f.WriteString(header)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(content)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func main() {
 	basePath, err := readBasePathFromConfig()
 	if err != nil {
@@ -140,6 +172,11 @@ func main() {
 				// Optionally create empty file if copy fails
 				file, _ := os.Create(filePath)
 				file.Close()
+			}
+			fullDate := today.Format("Monday, January 2, 2006")
+			err = writeHeader(filePath, fullDate)
+			if err != nil {
+				fmt.Println("Error writing header:", err)
 			}
 		} else {
 			// No previous file found, create empty notebook
