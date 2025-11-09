@@ -1,0 +1,7 @@
+# root directory under which all the notebooks will be created
+notebook_root: ~/dnb_notebooks
+
+# list individual notebooks. (these will be directories)
+notebooks:
+  - daily_notebook
+  - personal_notebook
