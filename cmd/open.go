@@ -1,22 +1,40 @@
-package main
+package cmd
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-
-	//"os/exec"
 	"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/AND2797/dnb/cmd"
 	"github.com/AND2797/dnb/cmd/internal"
+	"slices"
 )
+
+func Open(notebook string, config internal.Config) string {
+	root_dir := config.NotebookRoot
+	contains := slices.Contains(config.Notebooks, notebook)
+	if !contains {
+		fmt.Println("Notebook doesn't exist")
+		return ""
+	}
+
+	notebookPath := filepath.Join(root_dir, notebook)
+	notebookPath = expandHome(notebookPath)
+	todaysFile := getTodaysFile(notebookPath)
+
+	if _, err := os.Stat(todaysFile); os.IsNotExist(err) {
+		rollOverPrevious(notebookPath, todaysFile, time.Now())
+	} else {
+		file, _ := os.Create(todaysFile)
+		file.Close()
+	}
+
+	return todaysFile
+}
 
 func expandHome(path string) string {
 	if strings.HasPrefix(path, "~") {
@@ -26,31 +44,45 @@ func expandHome(path string) string {
 	return path
 }
 
-func readBasePathFromConfig() (string, error) {
-	usr, err := user.Current()
+func getTodaysFile(notebookPath string) string {
+	today := time.Now()
+	year := today.Format("2006")
+	month := today.Format("01")
+	day := today.Format("20060102")
+
+	dirPath := filepath.Join(notebookPath, year, month)
+	err := os.MkdirAll(dirPath, 0777)
 	if err != nil {
-		return "", err
+		return ""
 	}
 
-	configPath := filepath.Join(usr.HomeDir, ".dnbconf", "internal.txt")
-	file, err := os.Open(configPath)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "nbrootdir=") {
-			basepath := strings.TrimSpace(strings.TrimPrefix(line, "nbrootdir="))
-			return basepath, nil
-		}
-	}
-	return "", fmt.Errorf("nbrootdir not found in internal")
+	return filepath.Join(dirPath, day+".txt")
 }
 
-func findLatestFileBefore(basePath string, today time.Time) (string, error) {
+func rollOverPrevious(notebookPath string, todaysFile string, withRespectTo time.Time) {
+	prevFilePath, err := findLatestFile(notebookPath, withRespectTo)
+	if err == nil && prevFilePath != "" {
+		fmt.Println(fmt.Sprintf("Rolling over from %s", prevFilePath))
+
+		if err := copyFile(prevFilePath, todaysFile); err != nil {
+			fmt.Println("Error while copying file:", err)
+			file, _ := os.Create(todaysFile)
+			file.Close()
+		}
+		fullDate := withRespectTo.Format("Monday, January 2, 2006")
+		err = writeHeader(todaysFile, fullDate)
+		if err != nil {
+			fmt.Println("Error writing header:", err)
+		}
+	} else {
+		// No previous file found, create empty file
+		file, _ := os.Create(todaysFile)
+		file.Close()
+	}
+
+}
+
+func findLatestFile(basePath string, today time.Time) (string, error) {
 	var files []string
 	var fileDates []time.Time
 
@@ -86,7 +118,6 @@ func findLatestFileBefore(basePath string, today time.Time) (string, error) {
 	return files[idx], nil
 }
 
-// copyFile copies the contents of the file named src to dst.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -115,7 +146,6 @@ func copyFile(src, dst string) error {
 	return nil
 }
 
-// writeHeader writes the date and location as the first line to the given file
 func writeHeader(filePath string, dateStr string) error {
 	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
 	if err != nil {
@@ -145,28 +175,4 @@ func writeHeader(filePath string, dateStr string) error {
 	}
 
 	return nil
-}
-
-func parse(arg []string, config internal.Config) {
-	// TODO: just using a basic parser for now as there aren't many commands.
-	// If required I might look into spf13/cobra but it's not required for now
-
-	if arg[0] == "list" {
-		cmd.List(config)
-	} else if arg[0] == "open" {
-		nb := cmd.Open(arg[1], config)
-		exec_vim := exec.Command("vim", nb)
-		exec_vim.Stdin = os.Stdin
-		exec_vim.Stdout = os.Stdout
-		exec_vim.Stderr = os.Stderr
-		exec_vim.Run()
-	}
-}
-
-func main() {
-	// TODO: return error
-	os.Args = os.Args[1:]
-	config := internal.GetConfig()
-
-	parse(os.Args, config)
 }
