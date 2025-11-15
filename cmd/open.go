@@ -10,8 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AND2797/dnb/cmd/internal"
 	"slices"
+
+	"github.com/AND2797/dnb/cmd/internal"
 )
 
 func Open(notebook string, config internal.Config) string {
@@ -28,9 +29,6 @@ func Open(notebook string, config internal.Config) string {
 
 	if _, err := os.Stat(todaysFile); os.IsNotExist(err) {
 		rollOverPrevious(notebookPath, todaysFile, time.Now())
-	} else {
-		file, _ := os.Create(todaysFile)
-		file.Close()
 	}
 
 	return todaysFile
@@ -66,8 +64,8 @@ func rollOverPrevious(notebookPath string, todaysFile string, withRespectTo time
 
 		if err := copyFile(prevFilePath, todaysFile); err != nil {
 			fmt.Println("Error while copying file:", err)
-			file, _ := os.Create(todaysFile)
-			file.Close()
+			fmt.Println("Creating ")
+			return
 		}
 		fullDate := withRespectTo.Format("Monday, January 2, 2006")
 		err = writeHeader(todaysFile, fullDate)
@@ -76,10 +74,10 @@ func rollOverPrevious(notebookPath string, todaysFile string, withRespectTo time
 		}
 	} else {
 		// No previous file found, create empty file
+		// TODO: handle this outside rollOverPrevious. rollOverPrevious should *only* rollover contents
 		file, _ := os.Create(todaysFile)
 		file.Close()
 	}
-
 }
 
 func findLatestFile(basePath string, today time.Time) (string, error) {
