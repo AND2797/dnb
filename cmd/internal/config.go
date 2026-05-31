@@ -1,7 +1,7 @@
 package internal
 
 import (
-	"log"
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -14,26 +14,28 @@ type Config struct {
 	Notebooks    []string `yaml:"notebooks"`
 }
 
-func GetConfig() Config {
-
-	var config Config
-
+// GetConfig loads the config from ~/.dnbconf/config.yaml.
+func GetConfig() (Config, error) {
 	usr, err := user.Current()
 	if err != nil {
-		// TODO: handle this better
-		return config
+		return Config{}, fmt.Errorf("looking up current user: %w", err)
 	}
 
 	configPath := filepath.Join(usr.HomeDir, ".dnbconf", "config.yaml")
+	return loadConfig(configPath)
+}
+
+// loadConfig reads and parses a config file at the given path.
+func loadConfig(configPath string) (Config, error) {
 	yamlFile, err := os.ReadFile(configPath)
 	if err != nil {
-		log.Printf("Error reading internal file: %v\n", err)
+		return Config{}, fmt.Errorf("reading config %s: %w", configPath, err)
 	}
 
-	err = yaml.Unmarshal(yamlFile, &config)
-	if err != nil {
-		log.Fatalf("Error parsing internal file: %v\n", err)
+	var config Config
+	if err := yaml.Unmarshal(yamlFile, &config); err != nil {
+		return Config{}, fmt.Errorf("parsing config %s: %w", configPath, err)
 	}
 
-	return config
+	return config, nil
 }

@@ -1,172 +1,61 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
-
-	//"os/exec"
-	"os/user"
-	"path/filepath"
-	"regexp"
-	"strings"
-	"time"
 
 	"github.com/AND2797/dnb/cmd"
 	"github.com/AND2797/dnb/cmd/internal"
 )
 
-func expandHome(path string) string {
-	if strings.HasPrefix(path, "~") {
-		usr, _ := user.Current()
-		return filepath.Join(usr.HomeDir, path[1:])
+// editor returns the editor to launch, honoring $EDITOR and falling back to vim.
+func editor() string {
+	if e := os.Getenv("EDITOR"); e != "" {
+		return e
 	}
-	return path
+	return "vim"
 }
 
-func readBasePathFromConfig() (string, error) {
-	usr, err := user.Current()
-	if err != nil {
-		return "", err
-	}
-
-	configPath := filepath.Join(usr.HomeDir, ".dnbconf", "internal.txt")
-	file, err := os.Open(configPath)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "nbrootdir=") {
-			basepath := strings.TrimSpace(strings.TrimPrefix(line, "nbrootdir="))
-			return basepath, nil
-		}
-	}
-	return "", fmt.Errorf("nbrootdir not found in internal")
-}
-
-func findLatestFileBefore(basePath string, today time.Time) (string, error) {
-	var files []string
-	var fileDates []time.Time
-
-	re := regexp.MustCompile(`(\d{8})\.txt$`)
-	err := filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil // skip directories & errors
-		}
-		matches := re.FindStringSubmatch(info.Name())
-		if matches != nil {
-			// Parse date from filename
-			fileDate, err := time.Parse("20060102", matches[1])
-			if err == nil && fileDate.Before(today) {
-				files = append(files, path)
-				fileDates = append(fileDates, fileDate)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	if len(fileDates) == 0 {
-		return "", nil // no previous file found
-	}
-	// Find the max (latest) date
-	idx := 0
-	for i := 1; i < len(fileDates); i++ {
-		if fileDates[i].After(fileDates[idx]) {
-			idx = i
-		}
-	}
-	return files[idx], nil
-}
-
-// copyFile copies the contents of the file named src to dst.
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	// Copy file content from src to dst
-	_, err = io.Copy(out, in)
-	if err != nil {
-		return err
-	}
-
-	// Flush file to disk
-	err = out.Sync()
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// writeHeader writes the date and location as the first line to the given file
-func writeHeader(filePath string, dateStr string) error {
-	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	// Read existing content
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return err
-	}
-
-	// Construct header line
-	header := fmt.Sprintf("%s \n", dateStr)
-
-	// Write header + original content back to file
-	f.Truncate(0)
-	f.Seek(0, 0)
-	_, err = f.WriteString(header)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(content)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func parse(arg []string, config internal.Config) {
+func parse(args []string, config internal.Config) error {
 	// TODO: just using a basic parser for now as there aren't many commands.
 	// If required I might look into spf13/cobra but it's not required for now
 
-	if arg[0] == "list" {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: dnb <list|open <notebook>>")
+	}
+
+	switch args[0] {
+	case "list":
 		cmd.List(config)
-	} else if arg[0] == "open" {
-		nb := cmd.Open(arg[1], config)
-		exec_vim := exec.Command("vim", nb)
-		exec_vim.Stdin = os.Stdin
-		exec_vim.Stdout = os.Stdout
-		exec_vim.Stderr = os.Stderr
-		exec_vim.Run()
+		return nil
+	case "open":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: dnb open <notebook>")
+		}
+		nb, err := cmd.Open(args[1], config)
+		if err != nil {
+			return err
+		}
+		ed := exec.Command(editor(), nb)
+		ed.Stdin = os.Stdin
+		ed.Stdout = os.Stdout
+		ed.Stderr = os.Stderr
+		return ed.Run()
+	default:
+		return fmt.Errorf("unknown command %q", args[0])
 	}
 }
 
 func main() {
-	// TODO: return error
-	os.Args = os.Args[1:]
-	config := internal.GetConfig()
+	config, err := internal.GetConfig()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
 
-	parse(os.Args, config)
+	if err := parse(os.Args[1:], config); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
 }

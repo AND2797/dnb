@@ -1,0 +1,11 @@
+# Build artifacts
+/cmd/dnb/bin/
+*.exe
+
+# Editor / IDE
+.idea/
+*.swp
+
+# Stray Node files (not a Node project)
+cmd/dnb/package.json
+cmd/dnb/package-lock.json

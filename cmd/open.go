@@ -1,176 +1,140 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
-
-	"slices"
 
 	"github.com/AND2797/dnb/cmd/internal"
 )
 
-func Open(notebook string, config internal.Config) string {
-	root_dir := config.NotebookRoot
-	contains := slices.Contains(config.Notebooks, notebook)
-	if !contains {
-		fmt.Println("Notebook doesn't exist")
-		return ""
+const headerLayout = "Monday, January 2, 2006"
+
+var dateFileRe = regexp.MustCompile(`(\d{8})\.txt$`)
+
+// Open resolves the path to today's file for the given notebook, creating it
+// (and rolling over the previous day's contents) if it does not yet exist.
+func Open(notebook string, config internal.Config) (string, error) {
+	if !slices.Contains(config.Notebooks, notebook) {
+		return "", fmt.Errorf("notebook %q doesn't exist", notebook)
 	}
 
-	notebookPath := filepath.Join(root_dir, notebook)
-	notebookPath = expandHome(notebookPath)
-	todaysFile := getTodaysFile(notebookPath)
+	notebookPath := expandHome(filepath.Join(config.NotebookRoot, notebook))
+	now := time.Now()
+
+	todaysFile, err := getTodaysFile(notebookPath, now)
+	if err != nil {
+		return "", err
+	}
 
 	if _, err := os.Stat(todaysFile); os.IsNotExist(err) {
-		rollOverPrevious(notebookPath, todaysFile, time.Now())
+		if err := rollOverPrevious(notebookPath, todaysFile, now); err != nil {
+			return "", err
+		}
 	}
 
-	return todaysFile
+	return todaysFile, nil
 }
 
 func expandHome(path string) string {
 	if strings.HasPrefix(path, "~") {
-		usr, _ := user.Current()
+		usr, err := user.Current()
+		if err != nil {
+			return path
+		}
 		return filepath.Join(usr.HomeDir, path[1:])
 	}
 	return path
 }
 
-func getTodaysFile(notebookPath string) string {
-	today := time.Now()
-	year := today.Format("2006")
-	month := today.Format("01")
-	day := today.Format("20060102")
+// getTodaysFile returns the YYYY/MM/YYYYMMDD.txt path for the given day,
+// ensuring its parent directory exists.
+func getTodaysFile(notebookPath string, day time.Time) (string, error) {
+	dirPath := filepath.Join(notebookPath, day.Format("2006"), day.Format("01"))
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return "", fmt.Errorf("creating %s: %w", dirPath, err)
+	}
+	return filepath.Join(dirPath, day.Format("20060102")+".txt"), nil
+}
 
-	dirPath := filepath.Join(notebookPath, year, month)
-	err := os.MkdirAll(dirPath, 0777)
+// rollOverPrevious creates todaysFile. If a previous day's file exists, its
+// contents (minus any leading date header) are carried over beneath a fresh
+// header for the current day; otherwise an empty file is created.
+func rollOverPrevious(notebookPath string, todaysFile string, day time.Time) error {
+	prevFilePath, err := findLatestFile(notebookPath, day)
 	if err != nil {
-		return ""
+		return err
 	}
 
-	return filepath.Join(dirPath, day+".txt")
-}
-
-func rollOverPrevious(notebookPath string, todaysFile string, withRespectTo time.Time) {
-	prevFilePath, err := findLatestFile(notebookPath, withRespectTo)
-	if err == nil && prevFilePath != "" {
-		fmt.Println(fmt.Sprintf("Rolling over from %s", prevFilePath))
-
-		if err := copyFile(prevFilePath, todaysFile); err != nil {
-			fmt.Println("Error while copying file:", err)
-			fmt.Println("Creating ")
-			return
-		}
-		fullDate := withRespectTo.Format("Monday, January 2, 2006")
-		err = writeHeader(todaysFile, fullDate)
+	if prevFilePath == "" {
+		// No previous file found, create empty file.
+		f, err := os.Create(todaysFile)
 		if err != nil {
-			fmt.Println("Error writing header:", err)
+			return fmt.Errorf("creating %s: %w", todaysFile, err)
 		}
-	} else {
-		// No previous file found, create empty file
-		// TODO: handle this outside rollOverPrevious. rollOverPrevious should *only* rollover contents
-		file, _ := os.Create(todaysFile)
-		file.Close()
+		return f.Close()
 	}
+
+	fmt.Printf("Rolling over from %s\n", prevFilePath)
+
+	prev, err := os.ReadFile(prevFilePath)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", prevFilePath, err)
+	}
+
+	header := fmt.Sprintf("%s \n", day.Format(headerLayout))
+	out := append([]byte(header), stripHeader(prev)...)
+	if err := os.WriteFile(todaysFile, out, 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", todaysFile, err)
+	}
+	return nil
 }
 
-func findLatestFile(basePath string, today time.Time) (string, error) {
-	var files []string
-	var fileDates []time.Time
+// stripHeader removes a leading date-header line (as written by rollOverPrevious)
+// so headers don't accumulate across rollovers.
+func stripHeader(content []byte) []byte {
+	line, rest, found := bytes.Cut(content, []byte("\n"))
+	if _, err := time.Parse(headerLayout, strings.TrimSpace(string(line))); err != nil {
+		return content // first line isn't a header, leave content untouched
+	}
+	if !found {
+		return nil
+	}
+	return rest
+}
 
-	re := regexp.MustCompile(`(\d{8})\.txt$`)
+// findLatestFile returns the path of the most recent YYYYMMDD.txt file strictly
+// before the given day, or "" if none exist.
+func findLatestFile(basePath string, before time.Time) (string, error) {
+	var latestPath string
+	var latestDate time.Time
+
 	err := filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil // skip directories & errors
 		}
-		matches := re.FindStringSubmatch(info.Name())
-		if matches != nil {
-			// Parse date from filename
-			fileDate, err := time.Parse("20060102", matches[1])
-			if err == nil && fileDate.Before(today) {
-				files = append(files, path)
-				fileDates = append(fileDates, fileDate)
-			}
+		matches := dateFileRe.FindStringSubmatch(info.Name())
+		if matches == nil {
+			return nil
+		}
+		fileDate, err := time.Parse("20060102", matches[1])
+		if err != nil || !fileDate.Before(before) {
+			return nil
+		}
+		if latestPath == "" || fileDate.After(latestDate) {
+			latestPath = path
+			latestDate = fileDate
 		}
 		return nil
 	})
 	if err != nil {
 		return "", err
 	}
-	if len(fileDates) == 0 {
-		return "", nil // no previous file found
-	}
-	// Find the max (latest) date
-	idx := 0
-	for i := 1; i < len(fileDates); i++ {
-		if fileDates[i].After(fileDates[idx]) {
-			idx = i
-		}
-	}
-	return files[idx], nil
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	// Copy file content from src to dst
-	_, err = io.Copy(out, in)
-	if err != nil {
-		return err
-	}
-
-	// Flush file to disk
-	err = out.Sync()
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func writeHeader(filePath string, dateStr string) error {
-	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	// Read existing content
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return err
-	}
-
-	// Construct header line
-	header := fmt.Sprintf("%s \n", dateStr)
-
-	// Write header + original content back to file
-	f.Truncate(0)
-	f.Seek(0, 0)
-	_, err = f.WriteString(header)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(content)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return latestPath, nil
 }
