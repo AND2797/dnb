@@ -19,6 +19,8 @@ func mustParse(t *testing.T, s string) time.Time {
 }
 
 func TestGetTodaysFile(t *testing.T) {
+	// Scenario: resolve today's file for a given day under an empty root.
+	// Expectation: returns the YYYY/MM/YYYYMMDD.txt path and creates its parent dir.
 	root := t.TempDir()
 	day := mustParse(t, "20260531")
 
@@ -39,6 +41,8 @@ func TestGetTodaysFile(t *testing.T) {
 }
 
 func TestFindLatestFile(t *testing.T) {
+	// Scenario: several dated files (and a non-date file) spread across month dirs.
+	// Expectation: returns the most recent file strictly before the given day.
 	root := t.TempDir()
 	// Spread files across different month directories.
 	for _, name := range []string{
@@ -57,6 +61,8 @@ func TestFindLatestFile(t *testing.T) {
 	}
 
 	t.Run("latest before today", func(t *testing.T) {
+		// Scenario: look back from 20260531.
+		// Expectation: the newest earlier file, 20260529.txt, is chosen.
 		got, err := findLatestFile(root, mustParse(t, "20260531"))
 		if err != nil {
 			t.Fatal(err)
@@ -68,7 +74,8 @@ func TestFindLatestFile(t *testing.T) {
 	})
 
 	t.Run("excludes the day itself and future", func(t *testing.T) {
-		// 20260529 should be excluded since it is not strictly before.
+		// Scenario: look back from 20260529, which has its own file.
+		// Expectation: that day is excluded (not strictly before), so 20260501.txt wins.
 		got, err := findLatestFile(root, mustParse(t, "20260529"))
 		if err != nil {
 			t.Fatal(err)
@@ -80,6 +87,8 @@ func TestFindLatestFile(t *testing.T) {
 	})
 
 	t.Run("none found", func(t *testing.T) {
+		// Scenario: look back from a day earlier than every file on disk.
+		// Expectation: returns an empty path with no error.
 		got, err := findLatestFile(root, mustParse(t, "20260101"))
 		if err != nil {
 			t.Fatal(err)
@@ -90,6 +99,8 @@ func TestFindLatestFile(t *testing.T) {
 	})
 
 	t.Run("missing base path", func(t *testing.T) {
+		// Scenario: the notebook directory does not exist yet.
+		// Expectation: returns an empty path with no error (treated as "no files").
 		got, err := findLatestFile(filepath.Join(root, "nope"), mustParse(t, "20260531"))
 		if err != nil {
 			t.Fatalf("expected nil error for missing dir, got %v", err)
@@ -101,6 +112,8 @@ func TestFindLatestFile(t *testing.T) {
 }
 
 func TestStripHeader(t *testing.T) {
+	// Scenario: content that may or may not begin with a date-header line.
+	// Expectation: a leading header is removed; anything else is returned unchanged.
 	tests := []struct {
 		name string
 		in   string
@@ -138,6 +151,8 @@ func TestStripHeader(t *testing.T) {
 
 func TestRollOverPrevious(t *testing.T) {
 	t.Run("no previous file creates empty file", func(t *testing.T) {
+		// Scenario: roll over when no earlier notebook file exists.
+		// Expectation: today's file is created empty.
 		root := t.TempDir()
 		day := mustParse(t, "20260531")
 		todays, _ := getTodaysFile(root, day)
@@ -155,6 +170,8 @@ func TestRollOverPrevious(t *testing.T) {
 	})
 
 	t.Run("carries over content under a fresh single header", func(t *testing.T) {
+		// Scenario: a previous day's file (with its own header) exists.
+		// Expectation: its body is carried over beneath one fresh header for today.
 		root := t.TempDir()
 
 		// Seed a previous day's file that already has its own header.
@@ -190,12 +207,16 @@ func TestOpen(t *testing.T) {
 	}
 
 	t.Run("unknown notebook returns error", func(t *testing.T) {
+		// Scenario: open a notebook not listed in the config.
+		// Expectation: returns an error.
 		if _, err := Open("missing", config); err == nil {
 			t.Error("expected error for unknown notebook")
 		}
 	})
 
 	t.Run("known notebook returns todays file under notebook dir", func(t *testing.T) {
+		// Scenario: open a notebook that exists in the config.
+		// Expectation: today's file is created and lives under the notebook directory.
 		path, err := Open("daily", config)
 		if err != nil {
 			t.Fatal(err)

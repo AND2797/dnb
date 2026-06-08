@@ -7,6 +7,8 @@ import (
 )
 
 func TestLoadConfig(t *testing.T) {
+	// Scenario: a well-formed config.yaml with a root and two notebooks.
+	// Expectation: fields are parsed into the Config struct in order.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	yaml := "notebook_root: ~/dnb_notebooks\nnotebooks:\n  - daily\n  - personal\n"
@@ -27,6 +29,8 @@ func TestLoadConfig(t *testing.T) {
 }
 
 func TestLoadConfigMissingFile(t *testing.T) {
+	// Scenario: the config file path does not exist.
+	// Expectation: loadConfig returns an error rather than a zero Config.
 	_, err := loadConfig(filepath.Join(t.TempDir(), "nope.yaml"))
 	if err == nil {
 		t.Error("expected error for missing config file")
@@ -34,6 +38,8 @@ func TestLoadConfigMissingFile(t *testing.T) {
 }
 
 func TestLoadConfigInvalidYAML(t *testing.T) {
+	// Scenario: the config file contains malformed YAML.
+	// Expectation: loadConfig surfaces a parse error.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte("notebooks: [unterminated\n"), 0644); err != nil {

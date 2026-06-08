@@ -4,17 +4,20 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/AND2797/dnb/cmd"
 	"github.com/AND2797/dnb/cmd/internal"
 )
 
-// editor returns the editor to launch, honoring $EDITOR and falling back to vim.
-func editor() string {
-	if e := os.Getenv("EDITOR"); e != "" {
-		return e
+// editor returns the editor command (and any arguments) to launch, honoring
+// $EDITOR and falling back to vim. $EDITOR may include flags, e.g. "code -w",
+// so it is split into fields rather than treated as a single binary name.
+func editor() []string {
+	if fields := strings.Fields(os.Getenv("EDITOR")); len(fields) > 0 {
+		return fields
 	}
-	return "vim"
+	return []string{"vim"}
 }
 
 func parse(args []string, config internal.Config) error {
@@ -37,11 +40,12 @@ func parse(args []string, config internal.Config) error {
 		if err != nil {
 			return err
 		}
-		ed := exec.Command(editor(), nb)
-		ed.Stdin = os.Stdin
-		ed.Stdout = os.Stdout
-		ed.Stderr = os.Stderr
-		return ed.Run()
+		ed := editor()
+		c := exec.Command(ed[0], append(ed[1:], nb)...)
+		c.Stdin = os.Stdin
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+		return c.Run()
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
